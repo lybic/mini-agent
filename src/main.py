@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -147,6 +148,7 @@ async def run_agent(req: RunAgentRequest):
 
                 task_cancelled = False
                 final_msg:str|None = None
+                needs_human_intervention = False
                 try:
                     messages =  _execute_planner_with_context_saving(
                         planner, model_client, task_id, sandbox_id
@@ -156,11 +158,20 @@ async def run_agent(req: RunAgentRequest):
                     async for msg in messages:
                         final_msg = msg
                         yield msg
+                        
+                        # Check for human intervention needed
+                        try:
+                            msg_data = json.loads(msg.replace('data: ', '').strip())
+                            if msg_data.get('needs_human'):
+                                needs_human_intervention = True
+                                break
+                        except:
+                            pass
                 except asyncio.CancelledError:
                     task_cancelled = True
                     logger.info(f"Task {task_id} was cancelled")
                 finally:
-                    await _finalize_task(task_id, model_client, task_cancelled, planner,final_msg)
+                    await _finalize_task(task_id, model_client, task_cancelled, planner,final_msg, needs_human_intervention=needs_human_intervention)
             except Exception as e:
                 logger.error(f"Error in generate(): {e}")
                 raise
@@ -269,6 +280,7 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
         task_cancelled = False
         final_output = None
         error = None
+        needs_human_intervention = False
         
         try:
             async for msg in _execute_planner_with_context_saving(
@@ -277,6 +289,15 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
                 msg_or_none=_get_finished_message(msg)
                 if isinstance(msg_or_none,str):
                     final_output=msg_or_none
+                
+                # Check for human intervention needed
+                try:
+                    msg_data = json.loads(msg.replace('data: ', '').strip())
+                    if msg_data.get('needs_human'):
+                        needs_human_intervention = True
+                        break
+                except:
+                    pass
             # task_cancelled, final_output, _ = await _execute_planner_with_context_saving(
             #     planner, model_client, task_id, sandbox_id
             # )
@@ -287,7 +308,7 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
             if not planner.cancelled:
                 logger.error(f"Error executing task {task_id}: {e}")
         finally:
-            await _finalize_task(task_id, model_client, task_cancelled, planner, final_output, error)
+            await _finalize_task(task_id, model_client, task_cancelled, planner, final_output, error, needs_human_intervention)
     
     except Exception as e:
         logger.error(f"Error in execute_task_background(): {e}")
@@ -462,7 +483,6 @@ def _setup_model_and_planner(task_id: str, sandbox_id: str, instruction: str,
 def _get_finished_message(msg):
     # Extract finished output from message
     if 'finished(' in msg:
-        import re
         match = re.search(r"finished\(content='([^']*)'\)", msg)
         if match:
             return match.group(1)
@@ -505,7 +525,8 @@ async def _execute_planner_with_context_saving(planner: Planner, model_client: A
 
 async def _finalize_task(task_id: str, model_client: AsyncChatModelClient, 
                         task_cancelled: bool, planner: Planner, 
-                        final_output: Optional[str] = None, error: Optional[Exception] = None):
+                        final_output: Optional[str] = None, error: Optional[Exception] = None,
+                        needs_human_intervention: bool = False):
     """Finalize task - save context and update status - shared logic"""
     try:
         context = model_client.get_context_for_persistence()
@@ -513,6 +534,8 @@ async def _finalize_task(task_id: str, model_client: AsyncChatModelClient,
         
         if task_cancelled or planner.cancelled:
             await task_storage.update_task(task_id, {'status': 'cancelled'})
+        elif needs_human_intervention:
+            await task_storage.update_task(task_id, {'status': 'human_intervention'})
         elif error:
             await task_storage.update_task(task_id, {
                 'status': 'error',

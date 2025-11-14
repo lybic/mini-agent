@@ -123,7 +123,7 @@ class Planner(object):
                     yield self._format_sse({"stage": "System", "message": "Task completed successfully!", "done": True})
                     break
                 if "call_user(" in action:
-                    yield self._format_sse({"stage": "System", "message": f"👤 Calling user for help\n\n{summary}"})
+                    yield self._format_sse({"stage": "System", "message": f"👤 Calling user for help\n\n{summary}", "needs_human": True})
                     break
                 if "output(" in action:
                     self.model_client.add_output_messages()
