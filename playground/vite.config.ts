@@ -30,7 +30,7 @@ export default defineConfig({
         timeout: 120000,
       },
       '/lybic_api': {
-        target: 'https://lybic-dev.swecan.tingyutech.cn',
+        target: 'https://api.lybic.cn',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/lybic_api/, '/api'),
         timeout: 120000,

@@ -49,7 +49,7 @@ TASK_STORAGE_BACKEND=memory
 No configuration needed. Tasks are stored in memory:
 
 ```python
-from gui_agents.storage import create_storage
+from src.storage import create_storage
 
 # Creates MemoryStorage by default
 storage = create_storage()
@@ -121,7 +121,7 @@ class TaskStorage(ABC):
 ### Example Usage
 
 ```python
-from gui_agents.storage import TaskData, create_storage
+from src.storage import TaskData, create_storage
 
 # Create storage instance
 storage = create_storage()
