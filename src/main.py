@@ -65,7 +65,7 @@ async def create_sandbox(req: CreateSandboxRequest):
             result = await sandbox_service.create(
                 CreateSandboxDto(
                     name=req.name,
-                    shape=req.shape,
+                    shape=req.shape or shape,
                     maxLifeSeconds=req.maxLifeSeconds,
                     projectId=req.projectId
                 )
