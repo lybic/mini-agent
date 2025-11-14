@@ -1,0 +1,622 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check endpoint",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sandbox/create": {
+      "post": {
+        "summary": "Create Sandbox",
+        "description": "Create a new sandbox via Lybic SDK",
+        "operationId": "create_sandbox_api_sandbox_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSandboxRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/run": {
+      "post": {
+        "summary": "Run Agent",
+        "description": "Stream agent execution with SSE",
+        "operationId": "run_agent_api_agent_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/task/submit": {
+      "post": {
+        "summary": "Submit Async Task",
+        "description": "Submit an async task and return task_id immediately",
+        "operationId": "submit_async_task_api_agent_task_submit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/task/status/{task_id}": {
+      "get": {
+        "summary": "Get Task Status By Path",
+        "description": "Query task status and result",
+        "operationId": "get_task_status_by_path_api_agent_task_status__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/task/list": {
+      "get": {
+        "summary": "List Tasks",
+        "description": "List all tasks with optional filtering",
+        "operationId": "list_tasks_api_agent_task_list_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/info": {
+      "get": {
+        "summary": "Get Agent Info",
+        "description": "Get agent server info",
+        "operationId": "get_agent_info_api_agent_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/tasks": {
+      "get": {
+        "summary": "List Active Tasks",
+        "description": "List all active tasks",
+        "operationId": "list_active_tasks_api_agent_tasks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/cancel": {
+      "post": {
+        "summary": "Cancel Agent",
+        "description": "Cancel current agent task execution",
+        "operationId": "cancel_agent_api_agent_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CancelRequest": {
+        "properties": {
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "authentication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LybicAuthentication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "CancelRequest"
+      },
+      "CreateSandboxRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The name of the sandbox.",
+            "default": "sandbox"
+          },
+          "maxLifeSeconds": {
+            "type": "integer",
+            "maximum": 86400.0,
+            "minimum": 1.0,
+            "title": "Maxlifeseconds",
+            "description": "The maximum life time of the sandbox in seconds. Default is 1 hour, max is 1 day.",
+            "default": 3600
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectid",
+            "description": "The project id to use for the sandbox. Use default if not provided."
+          },
+          "shape": {
+            "type": "string",
+            "title": "Shape",
+            "description": "Specs and datacenter of the sandbox."
+          },
+          "authentication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LybicAuthentication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "shape"
+        ],
+        "title": "CreateSandboxRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "LybicAuthentication": {
+        "properties": {
+          "api_key": {
+            "type": "string",
+            "title": "Api Key"
+          },
+          "org_id": {
+            "type": "string",
+            "title": "Org Id"
+          },
+          "api_endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Endpoint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "api_key",
+          "org_id"
+        ],
+        "title": "LybicAuthentication"
+      },
+      "RunAgentRequest": {
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "title": "Instruction"
+          },
+          "user_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User System Prompt"
+          },
+          "sandbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sandbox Id"
+          },
+          "continue_context": {
+            "type": "boolean",
+            "title": "Continue Context",
+            "default": false
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "authentication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LybicAuthentication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ark_apikey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ark Apikey"
+          }
+        },
+        "type": "object",
+        "required": [
+          "instruction"
+        ],
+        "title": "RunAgentRequest"
+      },
+      "SubmitTaskRequest": {
+        "properties": {
+          "instruction": {
+            "type": "string",
+            "title": "Instruction"
+          },
+          "user_system_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User System Prompt"
+          },
+          "sandbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sandbox Id"
+          },
+          "max_steps": {
+            "type": "integer",
+            "title": "Max Steps",
+            "default": 50
+          },
+          "continue_context": {
+            "type": "boolean",
+            "title": "Continue Context",
+            "default": false
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "authentication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LybicAuthentication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ark_apikey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ark Apikey"
+          }
+        },
+        "type": "object",
+        "required": [
+          "instruction"
+        ],
+        "title": "SubmitTaskRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
