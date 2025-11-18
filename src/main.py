@@ -620,7 +620,7 @@ async def _finalize_task(task_id: str, model_client: AsyncChatModelClient,
 
 def main():
     import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=5001,log_level=os.environ.get("LOG_LEVEL", "DEBUG").lower())
+    uvicorn.run(app, host='0.0.0.0', port=5000,log_level=os.environ.get("LOG_LEVEL", "DEBUG").lower())
 
 if __name__ == '__main__':
     main()
