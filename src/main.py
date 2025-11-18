@@ -4,13 +4,13 @@ import uuid
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
-from lybic.dto import CreateSandboxDto
+from httpx import HTTPStatusError
+from lybic.dto import GetSandboxResponseDto
 
 from src.chat import AsyncChatModelClient
-from src.dto import RunAgentRequest, SubmitTaskRequest, CancelRequest, CreateSandboxRequest, req_auth_from_dto
+from src.dto import *
 from src.planner import Planner
 from src.prompts import DOUBAO_UI_TARS_SYSTEM_PROMPT_ZH
 
@@ -52,26 +52,27 @@ async def health():
     """Health check endpoint"""
     return JSONResponse({'status': 'ok'})
 
+async def _create_sandbox(req:CreateSandboxRequest,shape:str='beijing-2c-4g-cpu')->GetSandboxResponseDto:
+    async with LybicClient(req_auth_from_dto(req.authentication)) as lybic_client:
+        # Create sandbox
+        sandbox_service = Sandbox(lybic_client)
+        result = await sandbox_service.create(
+            CreateSandboxDto(
+                name=req.name,
+                shape=req.shape or shape,
+                maxLifeSeconds=req.maxLifeSeconds,
+                projectId=req.projectId
+            )
+        )
+        sandbox_details = await sandbox_service.get(result.id)
+    return sandbox_details
+
 @app.post('/api/sandbox/create')
 async def create_sandbox(req: CreateSandboxRequest):
     """Create a new sandbox via Lybic SDK"""
     try:
-        shape = 'beijing-2c-4g-cpu'
-
         # Create Lybic client
-        async with LybicClient(req_auth_from_dto(req.authentication)) as lybic_client:
-            # Create sandbox
-            sandbox_service = Sandbox(lybic_client)
-            result = await sandbox_service.create(
-                CreateSandboxDto(
-                    name=req.name,
-                    shape=req.shape or shape,
-                    maxLifeSeconds=req.maxLifeSeconds,
-                    projectId=req.projectId
-                )
-            )
-            sandbox_details = await sandbox_service.get(result.id)
-
+        sandbox_details = await _create_sandbox(req)
         # Extract sandbox information
         sandbox_id = sandbox_details.sandbox.id
         return JSONResponse({
@@ -84,7 +85,10 @@ async def create_sandbox(req: CreateSandboxRequest):
             'architecture': sandbox_details.sandbox.shape.architecture,
             'message': f'Sandbox {sandbox_id} created successfully'
         })
-
+    except HTTPStatusError as he:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=he.response.status_code, detail=str(he))
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -99,7 +103,9 @@ async def run_agent(req: RunAgentRequest):
 
         async def generate():
             sandbox_id = req.sandbox_id
-            
+            if sandbox_id is None:
+               sandbox_info = await _create_sandbox(CreateSandboxRequest(authentication=req.authentication,shape='beijing-2c-4g-cpu'),shape='beijing-2c-4g-cpu')
+               sandbox_id = sandbox_info.sandbox.id
             try:
                 # Determine task ID and check for context restoration
                 existing_context = None
@@ -126,7 +132,7 @@ async def run_agent(req: RunAgentRequest):
                         status='running',
                         query=req.instruction,
                         max_steps=50,
-                        sandbox_info={'sandbox_id': sandbox_id} if sandbox_id else None,
+                        sandbox_info={'sandbox_id': sandbox_id},
                         request_data=req.model_dump()
                     )
                     await task_storage.create_task(new_task)

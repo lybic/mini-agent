@@ -51,14 +51,14 @@ class Planner(object):
         Capture screen screenshot
 
         Returns:
-            Tuple[int, int, str]: screen width, height and image base64 data
+            Tuple[int, int, str]: screen width, height and screenshot url
         """
         for i in range(3):
             try:
                 result = await self.lybic_sandbox.preview(self.sandbox_id)
-                image_base64 = await self.lybic_sandbox.get_screenshot_base64(self.sandbox_id)
+                # image_base64 = await self.lybic_sandbox.get_screenshot_base64(self.sandbox_id)
                 print("Screenshot captured - size=", result.cursorPosition)
-                return result.cursorPosition.screenWidth, result.cursorPosition.screenHeight, image_base64
+                return result.cursorPosition.screenWidth, result.cursorPosition.screenHeight, result.screenShot
             except Exception as e:
                 print(f"Attempt {i + 1} to take screenshot failed: {e}")
                 if i < 2:
@@ -102,7 +102,7 @@ class Planner(object):
 
                 # capture screenshot (no need to send to frontend as they don't display it)
                 screen_width, screen_height, screenshot_image = await self._take_screenshot()
-                image_base64 = f"data:image/webp;base64,{screenshot_image}"
+                # image_base64 = f"data:image/webp;base64,{screenshot_image}"
 
                 # Check if task is cancelled
                 if self.cancelled:
@@ -111,7 +111,7 @@ class Planner(object):
                     break
 
                 # get next action
-                response = await self.model_client.process_screenshot_and_update_history_messages(image_base64)
+                response = await self.model_client.process_screenshot_and_update_history_messages(screenshot_image)
                 summary, action = parse_summary_and_action_from_model_response_v2(
                     response)  # self.model_action_adaptor.parse_summary_and_action_from_model_response(response)
 
