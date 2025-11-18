@@ -162,15 +162,18 @@ async def run_agent(req: RunAgentRequest):
 
                     # Yield all collected messages
                     async for msg in messages:
-                        final_msg = msg
                         yield msg
                         
-                        # Check for human intervention needed
+                        # Check for human intervention needed and extract message
                         try:
                             msg_data = json.loads(msg.replace('data: ', '').strip())
                             if msg_data.get('needs_human'):
                                 needs_human_intervention = True
+                                final_msg = msg_data.get('message', '')
                                 break
+                            # Also extract finished message if present
+                            if msg_data.get('stage') == 'Planner':
+                                final_msg = msg_data.get('message', '')
                         except:
                             pass
                 except asyncio.CancelledError:
@@ -296,12 +299,16 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
                 if isinstance(msg_or_none,str):
                     final_output=msg_or_none
                 
-                # Check for human intervention needed
+                # Check for human intervention needed and extract message
                 try:
                     msg_data = json.loads(msg.replace('data: ', '').strip())
                     if msg_data.get('needs_human'):
                         needs_human_intervention = True
+                        final_output = msg_data.get('message', '')
                         break
+                    # Also extract planner message for finished state
+                    if msg_data.get('stage') == 'Planner':
+                        final_output = msg_data.get('message', '')
                 except:
                     pass
             # task_cancelled, final_output, _ = await _execute_planner_with_context_saving(
@@ -339,8 +346,8 @@ async def get_task_status_by_path(task_id: str):
             'updated_at': task_data.updated_at.isoformat() if task_data.updated_at else None
         }
         
-        # Add finished_output when task is completed
-        if task_data.status == 'finished' and task_data.finished_output:
+        # Add finished_output when task is completed or needs human intervention
+        if task_data.status in ('finished', 'human_intervention') and task_data.finished_output:
             response['finished_output'] = task_data.finished_output
         
         # Add error info if task failed
@@ -541,7 +548,10 @@ async def _finalize_task(task_id: str, model_client: AsyncChatModelClient,
         if task_cancelled or planner.cancelled:
             await task_storage.update_task(task_id, {'status': 'cancelled'})
         elif needs_human_intervention:
-            await task_storage.update_task(task_id, {'status': 'human_intervention'})
+            updates = {'status': 'human_intervention'}
+            if final_output:
+                updates['finished_output'] = final_output
+            await task_storage.update_task(task_id, updates)
         elif error:
             await task_storage.update_task(task_id, {
                 'status': 'error',
