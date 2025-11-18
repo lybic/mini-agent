@@ -8,7 +8,7 @@ dependencies = [
     "dotenv>=0.9.9",
     "fastapi>=0.115.0",
     "langgraph>=1.0.3",
-    "lybic>=0.8.0,<1.0.0",
+    "lybic>=0.10.1,<1.0.0",
     "openai",
     "opensearch-py>=3.0.0",
     "uvicorn>=0.32.0",

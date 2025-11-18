@@ -519,16 +519,16 @@ wheels = [
 
 [[package]]
 name = "lybic"
-version = "0.9.0"
+version = "0.10.1"
 source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple/" }
 dependencies = [
     { name = "httpx" },
     { name = "pillow" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/9f/fe/8701473dc4d85f98acd05515ad1884c9d58307e35d29f830fba5d7a30ded/lybic-0.9.0.tar.gz", hash = "sha256:78fefdeed3c065b5f5ed32d64abedd1a046f3708bb02cc641ce01c9278e8269b", size = 43989, upload-time = "2025-11-12T10:09:29.805Z" }
+sdist = { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/9d/25/3d7550d34627630f9c85edaabaf0cf48bc1be2d20587f043dd36d205011f/lybic-0.10.1.tar.gz", hash = "sha256:a34c63389def513f05637e87ba55329f524d3d643a996ee3f39de4c0ae34d5c1", size = 43661, upload-time = "2025-11-17T09:30:44.851Z" }
 wheels = [
-    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/20/23/20e6f50caf9dea8b77f092fc9216f9005dea1f23663ff68713bcf56dbb62/lybic-0.9.0-py3-none-any.whl", hash = "sha256:f8caeb9b70fefaaf80c1ca93e28fc184138e7ef01a83d1362366077e3fcbcfb1", size = 60774, upload-time = "2025-11-12T10:09:28.391Z" },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/50/e5/1e6fb7a8d0690cb5a0c8304af7bb63ab945284bdd376bbd9743b70a87914/lybic-0.10.1-py3-none-any.whl", hash = "sha256:a04c6bc8f8c0be91dae54552854d5ac2ad46d9c920c5a59ace89e2db0453d549", size = 60614, upload-time = "2025-11-17T09:30:43.881Z" },
 ]
 
 [[package]]
@@ -553,7 +553,7 @@ requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "langgraph", specifier = ">=1.0.3" },
-    { name = "lybic", specifier = ">=0.8.0,<1.0.0" },
+    { name = "lybic", specifier = "==0.10.1" },
     { name = "openai" },
     { name = "opensearch-py", specifier = ">=3.0.0" },
     { name = "uvicorn", specifier = ">=0.32.0" },
