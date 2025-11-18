@@ -34,6 +34,7 @@ from src.planner import Planner
 from src.storage import create_storage, TaskData
 from src.prompts import DOUBAO_UI_TARS_SYSTEM_PROMPT_ZH
 
+logging.basicConfig(level=os.environ.get("LOG_LEVEL", "DEBUG"))
 app = FastAPI(
     title='Lybic Single Model Agent Server',
 )
@@ -146,6 +147,15 @@ async def run_agent(req: RunAgentRequest):
                 if existing_context:
                     yield f"data: {json.dumps({'stage': 'System', 'message': '🔄 Context restored, continuing conversation...', 'taskId': task_id, 'timestamp': __import__('datetime').datetime.now().isoformat()}, ensure_ascii=False)}\n\n"
                 
+                # Register NOTIFY listener if using PostgreSQL
+                if hasattr(task_storage, 'register_cancel_listener'):
+                    def cancel_callback(cancelled_task_id):
+                        if cancelled_task_id == task_id:
+                            planner.cancelled = True
+                            logger.info(f"Task {task_id} cancelled via NOTIFY")
+                    
+                    task_storage.register_cancel_listener(task_id, cancel_callback)
+                
                 # Store planner in active tasks with thread-safe lock
                 async with active_tasks_lock:
                     active_tasks[task_id] = planner
@@ -178,6 +188,10 @@ async def run_agent(req: RunAgentRequest):
                     task_cancelled = True
                     logger.info(f"Task {task_id} was cancelled")
                 finally:
+                    # Unregister NOTIFY listener if using PostgreSQL
+                    if hasattr(task_storage, 'unregister_cancel_listener'):
+                        task_storage.unregister_cancel_listener(task_id)
+                    
                     await _finalize_task(task_id, model_client, task_cancelled, planner,final_msg, needs_human_intervention=needs_human_intervention)
             except Exception as e:
                 logger.error(f"Error in generate(): {e}")
@@ -280,6 +294,15 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
             req.ark_apikey
         )
         
+        # Register NOTIFY listener if using PostgreSQL
+        if hasattr(task_storage, 'register_cancel_listener'):
+            def cancel_callback(cancelled_task_id):
+                if cancelled_task_id == task_id:
+                    planner.cancelled = True
+                    logger.info(f"Task {task_id} cancelled via NOTIFY")
+            
+            task_storage.register_cancel_listener(task_id, cancel_callback)
+        
         # Store planner in active tasks
         async with active_tasks_lock:
             active_tasks[task_id] = planner
@@ -319,6 +342,10 @@ async def execute_task_background(task_id: str, req: SubmitTaskRequest):
             if not planner.cancelled:
                 logger.error(f"Error executing task {task_id}: {e}")
         finally:
+            # Unregister NOTIFY listener if using PostgreSQL
+            if hasattr(task_storage, 'unregister_cancel_listener'):
+                task_storage.unregister_cancel_listener(task_id)
+            
             await _finalize_task(task_id, model_client, task_cancelled, planner, final_output, error, needs_human_intervention)
     
     except Exception as e:
@@ -400,9 +427,9 @@ async def list_tasks(status: Optional[str] = None, limit: Optional[int] = None, 
 async def get_agent_info():
     """Get agent server info"""
     return JSONResponse({
-        'version': 'Lybic-single-model',
+        'version': 'mini-lybic-guiagent-0.1',
         'maxConcurrentTasks': 'unlimited',
-        'log_level': 'debug'
+        'log_level': os.environ.get("LOG_LEVEL","DEBUG")
     })
 
 @app.get('/api/agent/tasks')
@@ -424,29 +451,53 @@ async def list_active_tasks():
 
 @app.post('/api/agent/cancel')
 async def cancel_agent(req: CancelRequest):
-    """Cancel current agent task execution"""
+    """Cancel agent task execution (stateless)"""
     try:
         if req.task_id:
-            # Cancel specific task (thread-safe read)
-            async with active_tasks_lock:
-                planner = active_tasks.get(req.task_id)
-                if planner:
-                    planner.cancelled = True
-                    return JSONResponse({'success': True, 'message': f'Task {req.task_id} cancelled'})
+            # Request cancellation via storage (works across all instances)
+            success = await task_storage.request_cancel_task(req.task_id)
+            if success:
+                # Also try to cancel in-memory if running on this instance
+                async with active_tasks_lock:
+                    planner = active_tasks.get(req.task_id)
+                    if planner:
+                        planner.cancelled = True
+                        logger.info(f"Task {req.task_id} cancelled in local instance")
+                
+                # Check if task was already cancelled
+                task_data = await task_storage.get_task(req.task_id)
+                if task_data and task_data.status == 'cancelled':
+                    return JSONResponse({
+                        'success': True, 
+                        'message': f'Task {req.task_id} successfully cancelled',
+                        'already_cancelled': True
+                    })
+                else:
+                    return JSONResponse({
+                        'success': True, 
+                        'message': f'Cancellation requested for task {req.task_id}',
+                        'already_cancelled': False
+                    })
+            else:
+                # Get task details to provide better error message
+                task_data = await task_storage.get_task(req.task_id)
+                if task_data:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f'Task is in "{task_data.status}" state and cannot be cancelled'
+                    )
                 else:
                     raise HTTPException(status_code=404, detail='Task not found')
         else:
-            # Cancel all active tasks (thread-safe)
+            # Cancel all active tasks
+            cancelled_count = await task_storage.request_cancel_all_tasks()
+            
+            # Also cancel in-memory tasks on this instance
             async with active_tasks_lock:
-                if not active_tasks:
-                    raise HTTPException(status_code=404, detail='No active tasks')
-                
-                cancelled_count = 0
                 for planner in active_tasks.values():
                     planner.cancelled = True
-                    cancelled_count += 1
             
-            return JSONResponse({'success': True, 'message': f'{cancelled_count} task(s) cancelled'})
+            return JSONResponse({'success': True, 'message': f'Cancellation requested for {cancelled_count} task(s)'})
     
     except HTTPException:
         raise
@@ -484,7 +535,8 @@ def _setup_model_and_planner(task_id: str, sandbox_id: str, instruction: str,
     planner = Planner(
         sandbox_id=sandbox_id,
         model_client=model_client,
-        lybic=lybic_client
+        lybic=lybic_client,
+        task_storage=task_storage
     )
     planner.task_id = task_id
     
@@ -568,7 +620,7 @@ async def _finalize_task(task_id: str, model_client: AsyncChatModelClient,
 
 def main():
     import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=5000)
+    uvicorn.run(app, host='0.0.0.0', port=5001,log_level=os.environ.get("LOG_LEVEL", "DEBUG").lower())
 
 if __name__ == '__main__':
     main()

@@ -37,7 +37,7 @@ def parse_summary_and_action_from_model_response_v2(text: str) -> Tuple[Optional
     return thought, action
 
 class Planner(object):
-    def __init__(self, sandbox_id: str, model_client: AsyncChatModelClient, lybic: LybicClient):
+    def __init__(self, sandbox_id: str, model_client: AsyncChatModelClient, lybic: LybicClient, task_storage=None):
         self.lybic_computer_use = ComputerUse(lybic)
         self.max_actions = 50
         self.task_id: str = ''
@@ -45,6 +45,8 @@ class Planner(object):
         self.lybic_sandbox = Sandbox(lybic)
         self.model_client: AsyncChatModelClient = model_client
         self.cancelled = False
+        self.task_storage = task_storage
+        self._cancel_check_interval = 3  # Check cancellation every N actions
 
     async def _take_screenshot(self) -> Tuple[int, int, str]:
         """
@@ -85,6 +87,30 @@ class Planner(object):
         data['timestamp'] = data.get('timestamp') or __import__('datetime').datetime.now().isoformat()
         return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+    async def _check_cancellation(self) -> bool:
+        """
+        Check if task cancellation has been requested.
+        
+        This checks both the in-memory flag and queries storage (for stateless cancellation).
+        
+        Returns:
+            bool: True if cancellation was requested
+        """
+        if self.cancelled:
+            return True
+        
+        # Check storage if available (polling fallback)
+        if self.task_storage and self.task_id:
+            try:
+                cancel_requested = await self.task_storage.check_cancel_requested(self.task_id)
+                if cancel_requested:
+                    self.cancelled = True
+                    return True
+            except Exception as e:
+                print(f"Error checking cancellation status: {e}")
+        
+        return False
+
     async def run_task(self, lang: str = "zh") -> AsyncGenerator[str, Any]:
         start_action = "开始" if lang == "zh" else "Start"
         yield self._format_sse({"stage": "System", "message": start_action})
@@ -93,9 +119,9 @@ class Planner(object):
             yield self._format_sse({"stage": "System", "message": f"📝 Loaded memories:\n{memories_text}"})
 
         try:
-            for _ in range(self.max_actions):
-                # Check if task is cancelled
-                if self.cancelled:
+            for action_idx in range(self.max_actions):
+                # Check if task is cancelled (checks both memory and storage)
+                if await self._check_cancellation():
                     cancel_msg = "任务已取消" if lang == "zh" else "Task cancelled"
                     yield self._format_sse({"stage": "System", "message": f"🚫 {cancel_msg}", "cancelled": True})
                     break
@@ -104,11 +130,12 @@ class Planner(object):
                 screen_width, screen_height, screenshot_image = await self._take_screenshot()
                 # image_base64 = f"data:image/webp;base64,{screenshot_image}"
 
-                # Check if task is cancelled
-                if self.cancelled:
-                    cancel_msg = "任务已取消" if lang == "zh" else "Task cancelled"
-                    yield self._format_sse({"stage": "System", "message": f"🚫 {cancel_msg}", "cancelled": True})
-                    break
+                # Check if task is cancelled periodically
+                if action_idx % self._cancel_check_interval == 0:
+                    if await self._check_cancellation():
+                        cancel_msg = "任务已取消" if lang == "zh" else "Task cancelled"
+                        yield self._format_sse({"stage": "System", "message": f"🚫 {cancel_msg}", "cancelled": True})
+                        break
 
                 # get next action
                 response = await self.model_client.process_screenshot_and_update_history_messages(screenshot_image)
@@ -143,7 +170,7 @@ class Planner(object):
                     break
 
                 # Check if task is cancelled
-                if self.cancelled:
+                if await self._check_cancellation():
                     cancel_msg = "任务已取消" if lang == "zh" else "Task cancelled"
                     yield self._format_sse({"stage": "System", "message": f"🚫 {cancel_msg}", "cancelled": True})
                     break

@@ -185,3 +185,50 @@ class MemoryStorage(TaskStorage):
             
             logger.info(f"Cleaned up {len(tasks_to_delete)} old tasks from memory")
             return len(tasks_to_delete)
+    
+    async def request_cancel_task(self, task_id: str) -> bool:
+        """
+        Request cancellation of a task (stateless operation).
+        
+        Args:
+            task_id: Unique identifier for the task to cancel
+            
+        Returns:
+            bool: True if the cancellation request was recorded successfully
+        """
+        async with self._lock:
+            task_data = self._tasks.get(task_id)
+            if not task_data:
+                logger.warning(f"Task {task_id} not found for cancellation")
+                return False
+            
+            # If already cancelled, return success (idempotent)
+            if task_data.status == 'cancelled':
+                logger.info(f"Task {task_id} is already cancelled")
+                return True
+            
+            # If task is finished or errored, cannot cancel
+            if task_data.status in ('finished', 'error'):
+                logger.warning(f"Task {task_id} is already {task_data.status}, cannot cancel")
+                return False
+            
+            task_data.cancel_requested = True
+            task_data.cancelled_at = datetime.now()
+            task_data.updated_at = datetime.now()
+            
+            logger.info(f"Cancellation requested for task {task_id}")
+            return True
+    
+    async def check_cancel_requested(self, task_id: str) -> bool:
+        """
+        Check if cancellation has been requested for a task.
+        
+        Args:
+            task_id: Unique identifier for the task
+            
+        Returns:
+            bool: True if cancellation has been requested
+        """
+        async with self._lock:
+            task_data = self._tasks.get(task_id)
+            return task_data.cancel_requested if task_data else False

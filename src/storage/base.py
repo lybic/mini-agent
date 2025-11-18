@@ -27,6 +27,8 @@ class TaskData:
     request_data: Optional[Dict[str, Any]] = None
     finished_output: Optional[str] = None
     llm_context: Optional[List[Dict[str, Any]]] = None  # LLM conversation messages (without screenshots)
+    cancel_requested: bool = False  # Flag to request task cancellation
+    cancelled_at: Optional[datetime] = None  # Timestamp when cancellation was requested
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert TaskData to dictionary for serialization."""
@@ -191,3 +193,48 @@ class TaskStorage(ABC):
         """
         task_data = await self.get_task(task_id)
         return task_data.llm_context if task_data else None
+    
+    @abstractmethod
+    async def request_cancel_task(self, task_id: str) -> bool:
+        """
+        Request cancellation of a task (stateless operation).
+        
+        This sets the cancel_requested flag in storage and sends notifications
+        to running instances. Any API server can call this method.
+        
+        Args:
+            task_id: Unique identifier for the task to cancel
+            
+        Returns:
+            bool: True if the cancellation request was recorded successfully
+        """
+        pass
+    
+    @abstractmethod
+    async def check_cancel_requested(self, task_id: str) -> bool:
+        """
+        Check if cancellation has been requested for a task.
+        
+        This is used by running tasks to poll for cancellation requests.
+        
+        Args:
+            task_id: Unique identifier for the task
+            
+        Returns:
+            bool: True if cancellation has been requested
+        """
+        pass
+    
+    async def request_cancel_all_tasks(self) -> int:
+        """
+        Request cancellation of all active tasks.
+        
+        Returns:
+            int: Number of tasks marked for cancellation
+        """
+        active_tasks = await self.list_tasks(status='running')
+        cancelled_count = 0
+        for task in active_tasks:
+            if await self.request_cancel_task(task.task_id):
+                cancelled_count += 1
+        return cancelled_count

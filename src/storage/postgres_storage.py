@@ -32,7 +32,7 @@ class PostgresStorage(TaskStorage):
     providing persistence across service restarts.
     """
     
-    # SQL schema for tasks table
+    # SQL schema for tasks table (base schema without new fields)
     CREATE_TABLE_SQL = """
     CREATE TABLE IF NOT EXISTS agent_tasks (
         task_id VARCHAR(255) PRIMARY KEY,
@@ -44,8 +44,6 @@ class PostgresStorage(TaskStorage):
         execution_statistics JSONB,
         sandbox_info JSONB,
         request_data JSONB,
-        finished_output TEXT,
-        llm_context JSONB,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
@@ -79,6 +77,42 @@ class PostgresStorage(TaskStorage):
                 ALTER TABLE agent_tasks ADD COLUMN llm_context JSONB;
             END IF;
         END $$;
+        """,
+        # Add cancel_requested column if not exists
+        """
+        DO $$ 
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='agent_tasks' AND column_name='cancel_requested'
+            ) THEN
+                ALTER TABLE agent_tasks ADD COLUMN cancel_requested BOOLEAN DEFAULT FALSE;
+            END IF;
+        END $$;
+        """,
+        # Add cancelled_at column if not exists
+        """
+        DO $$ 
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='agent_tasks' AND column_name='cancelled_at'
+            ) THEN
+                ALTER TABLE agent_tasks ADD COLUMN cancelled_at TIMESTAMP;
+            END IF;
+        END $$;
+        """,
+        # Create index on cancel_requested if not exists
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='agent_tasks' AND column_name='cancel_requested'
+            ) THEN
+                CREATE INDEX IF NOT EXISTS idx_agent_tasks_cancel_requested ON agent_tasks(cancel_requested);
+            END IF;
+        END $$;
         """
     ]
     
@@ -100,6 +134,9 @@ class PostgresStorage(TaskStorage):
         self._pool: Optional[asyncpg.Pool] = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self._notification_listeners = {}  # task_id -> list of callbacks
+        self._listener_connection: Optional[asyncpg.Connection] = None
+        self._listener_task: Optional[asyncio.Task] = None
         logger.info("Initialized PostgresStorage for task persistence")
     
     async def _ensure_initialized(self):
@@ -143,10 +180,82 @@ class PostgresStorage(TaskStorage):
                 logger.error(f"Failed to initialize PostgreSQL schema: {e}")
                 raise
             
+            # Start LISTEN/NOTIFY listener for task cancellation
+            try:
+                await self._start_notification_listener()
+            except Exception as e:
+                logger.warning(f"Failed to start notification listener: {e}")
+            
             self._initialized = True
+    
+    async def _column_exists(self, conn, column_name: str) -> bool:
+        """Check if a column exists in agent_tasks table."""
+        result = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='agent_tasks' AND column_name=$1
+            )
+            """,
+            column_name
+        )
+        return result
+    
+    async def _start_notification_listener(self):
+        """Start a dedicated connection for LISTEN/NOTIFY."""
+        try:
+            self._listener_connection = await asyncpg.connect(self.connection_string)
+            await self._listener_connection.add_listener('task_cancel', self._handle_cancel_notification)
+            logger.info("Started PostgreSQL NOTIFY listener for task cancellation")
+        except Exception as e:
+            logger.error(f"Failed to start NOTIFY listener: {e}")
+            raise
+    
+    async def _handle_cancel_notification(self, connection, pid, channel, payload):
+        """Handle incoming cancel notifications."""
+        try:
+            task_id = payload
+            logger.info(f"Received cancel notification for task {task_id}")
+            
+            # Trigger any registered callbacks for this task
+            if task_id in self._notification_listeners:
+                for callback in self._notification_listeners[task_id]:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(task_id)
+                        else:
+                            callback(task_id)
+                    except Exception as e:
+                        logger.error(f"Error in cancel notification callback: {e}")
+        except Exception as e:
+            logger.error(f"Error handling cancel notification: {e}")
+    
+    def register_cancel_listener(self, task_id: str, callback):
+        """Register a callback for cancel notifications on a specific task."""
+        if task_id not in self._notification_listeners:
+            self._notification_listeners[task_id] = []
+        self._notification_listeners[task_id].append(callback)
+        logger.debug(f"Registered cancel listener for task {task_id}")
+    
+    def unregister_cancel_listener(self, task_id: str, callback=None):
+        """Unregister cancel listeners for a task."""
+        if callback:
+            if task_id in self._notification_listeners:
+                self._notification_listeners[task_id].remove(callback)
+        else:
+            self._notification_listeners.pop(task_id, None)
+        logger.debug(f"Unregistered cancel listener for task {task_id}")
     
     async def close(self):
         """Close the database connection pool."""
+        if self._listener_connection:
+            try:
+                await self._listener_connection.close()
+                self._listener_connection = None
+                logger.info("PostgreSQL notification listener closed")
+            except Exception as e:
+                logger.error(f"Error closing notification listener: {e}")
+        
         if self._pool:
             await self._pool.close()
             self._pool = None
@@ -167,14 +276,19 @@ class PostgresStorage(TaskStorage):
         
         try:
             async with self._pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO agent_tasks (
-                        task_id, status, query, max_steps, final_state,
-                        timestamp_dir, execution_statistics, sandbox_info,
-                        request_data, finished_output, llm_context, created_at, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                    """,
+                # Check which columns exist
+                has_finished_output = await self._column_exists(conn, 'finished_output')
+                has_llm_context = await self._column_exists(conn, 'llm_context')
+                has_cancel_requested = await self._column_exists(conn, 'cancel_requested')
+                has_cancelled_at = await self._column_exists(conn, 'cancelled_at')
+                
+                # Build dynamic INSERT statement based on available columns
+                columns = [
+                    'task_id', 'status', 'query', 'max_steps', 'final_state',
+                    'timestamp_dir', 'execution_statistics', 'sandbox_info',
+                    'request_data', 'created_at', 'updated_at'
+                ]
+                values = [
                     task_data.task_id,
                     task_data.status,
                     task_data.query,
@@ -184,11 +298,35 @@ class PostgresStorage(TaskStorage):
                     json.dumps(task_data.execution_statistics) if task_data.execution_statistics else None,
                     json.dumps(task_data.sandbox_info) if task_data.sandbox_info else None,
                     json.dumps(task_data.request_data) if task_data.request_data else None,
-                    task_data.finished_output,
-                    json.dumps(task_data.llm_context) if task_data.llm_context else None,
                     task_data.created_at or datetime.now(),
                     task_data.updated_at or datetime.now()
-                )
+                ]
+                
+                if has_finished_output:
+                    columns.append('finished_output')
+                    values.append(task_data.finished_output)
+                
+                if has_llm_context:
+                    columns.append('llm_context')
+                    values.append(json.dumps(task_data.llm_context) if task_data.llm_context else None)
+                
+                if has_cancel_requested:
+                    columns.append('cancel_requested')
+                    values.append(task_data.cancel_requested)
+                
+                if has_cancelled_at:
+                    columns.append('cancelled_at')
+                    values.append(task_data.cancelled_at)
+                
+                # Generate placeholders ($1, $2, ...)
+                placeholders = ', '.join(f'${i+1}' for i in range(len(values)))
+                
+                query = f"""
+                    INSERT INTO agent_tasks ({', '.join(columns)})
+                    VALUES ({placeholders})
+                """
+                
+                await conn.execute(query, *values)
                 logger.debug(f"Created task {task_data.task_id} in PostgreSQL")
                 return True
         except asyncpg.UniqueViolationError:
@@ -212,15 +350,34 @@ class PostgresStorage(TaskStorage):
         
         try:
             async with self._pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """
-                    SELECT task_id, status, query, max_steps, final_state,
-                           timestamp_dir, execution_statistics, sandbox_info,
-                           request_data, finished_output, llm_context, created_at, updated_at
+                # Check which columns exist
+                has_finished_output = await self._column_exists(conn, 'finished_output')
+                has_llm_context = await self._column_exists(conn, 'llm_context')
+                has_cancel_requested = await self._column_exists(conn, 'cancel_requested')
+                has_cancelled_at = await self._column_exists(conn, 'cancelled_at')
+                
+                # Build dynamic SELECT statement
+                columns = [
+                    'task_id', 'status', 'query', 'max_steps', 'final_state',
+                    'timestamp_dir', 'execution_statistics', 'sandbox_info',
+                    'request_data', 'created_at', 'updated_at'
+                ]
+                
+                if has_finished_output:
+                    columns.append('finished_output')
+                if has_llm_context:
+                    columns.append('llm_context')
+                if has_cancel_requested:
+                    columns.append('cancel_requested')
+                if has_cancelled_at:
+                    columns.append('cancelled_at')
+                
+                query = f"""
+                    SELECT {', '.join(columns)}
                     FROM agent_tasks WHERE task_id = $1
-                    """,
-                    task_id
-                )
+                """
+                
+                row = await conn.fetchrow(query, task_id)
                 
                 if not row:
                     return None
@@ -236,8 +393,10 @@ class PostgresStorage(TaskStorage):
                     execution_statistics=json.loads(row['execution_statistics']) if row['execution_statistics'] else None,
                     sandbox_info=json.loads(row['sandbox_info']) if row['sandbox_info'] else None,
                     request_data=json.loads(row['request_data']) if row['request_data'] else None,
-                    finished_output=row['finished_output'],
-                    llm_context=json.loads(row['llm_context']) if row['llm_context'] else None,
+                    finished_output=row.get('finished_output') if has_finished_output else None,
+                    llm_context=json.loads(row['llm_context']) if has_llm_context and row.get('llm_context') else None,
+                    cancel_requested=row.get('cancel_requested', False) if has_cancel_requested else False,
+                    cancelled_at=row.get('cancelled_at') if has_cancelled_at else None,
                     created_at=row['created_at'],
                     updated_at=row['updated_at']
                 )
@@ -269,7 +428,7 @@ class PostgresStorage(TaskStorage):
         allowed_update_fields = {
             'status', 'final_state', 'timestamp_dir',
             'execution_statistics', 'sandbox_info', 'request_data',
-            'finished_output', 'llm_context', 'query'
+            'finished_output', 'llm_context', 'query', 'cancel_requested', 'cancelled_at'
         }
         
         for key, value in updates.items():
@@ -364,34 +523,54 @@ class PostgresStorage(TaskStorage):
         """
         await self._ensure_initialized()
         
-        query = """
-            SELECT task_id, status, query, max_steps, final_state,
-                   timestamp_dir, execution_statistics, sandbox_info,
-                   request_data, finished_output, llm_context, created_at, updated_at
-            FROM agent_tasks
-        """
-        
-        params = []
-        param_idx = 1
-        
-        if status:
-            query += f" WHERE status = ${param_idx}"
-            params.append(status)
-            param_idx += 1
-        
-        query += " ORDER BY created_at DESC"
-        
-        if limit:
-            query += f" LIMIT ${param_idx}"
-            params.append(limit)
-            param_idx += 1
-        
-        if offset > 0:
-            query += f" OFFSET ${param_idx}"
-            params.append(offset)
-        
         try:
             async with self._pool.acquire() as conn:
+                # Check which columns exist
+                has_finished_output = await self._column_exists(conn, 'finished_output')
+                has_llm_context = await self._column_exists(conn, 'llm_context')
+                has_cancel_requested = await self._column_exists(conn, 'cancel_requested')
+                has_cancelled_at = await self._column_exists(conn, 'cancelled_at')
+                
+                # Build dynamic SELECT statement
+                columns = [
+                    'task_id', 'status', 'query', 'max_steps', 'final_state',
+                    'timestamp_dir', 'execution_statistics', 'sandbox_info',
+                    'request_data', 'created_at', 'updated_at'
+                ]
+                
+                if has_finished_output:
+                    columns.append('finished_output')
+                if has_llm_context:
+                    columns.append('llm_context')
+                if has_cancel_requested:
+                    columns.append('cancel_requested')
+                if has_cancelled_at:
+                    columns.append('cancelled_at')
+                
+                query = f"""
+                    SELECT {', '.join(columns)}
+                    FROM agent_tasks
+                """
+                
+                params = []
+                param_idx = 1
+                
+                if status:
+                    query += f" WHERE status = ${param_idx}"
+                    params.append(status)
+                    param_idx += 1
+                
+                query += " ORDER BY created_at DESC"
+                
+                if limit:
+                    query += f" LIMIT ${param_idx}"
+                    params.append(limit)
+                    param_idx += 1
+                
+                if offset > 0:
+                    query += f" OFFSET ${param_idx}"
+                    params.append(offset)
+                
                 rows = await conn.fetch(query, *params)
                 
                 tasks = []
@@ -406,8 +585,10 @@ class PostgresStorage(TaskStorage):
                         execution_statistics=json.loads(row['execution_statistics']) if row['execution_statistics'] else None,
                         sandbox_info=json.loads(row['sandbox_info']) if row['sandbox_info'] else None,
                         request_data=json.loads(row['request_data']) if row['request_data'] else None,
-                        finished_output=row['finished_output'],
-                        llm_context=json.loads(row['llm_context']) if row['llm_context'] else None,
+                        finished_output=row.get('finished_output') if has_finished_output else None,
+                        llm_context=json.loads(row['llm_context']) if has_llm_context and row.get('llm_context') else None,
+                        cancel_requested=row.get('cancel_requested', False) if has_cancel_requested else False,
+                        cancelled_at=row.get('cancelled_at') if has_cancelled_at else None,
                         created_at=row['created_at'],
                         updated_at=row['updated_at']
                     )
@@ -475,3 +656,111 @@ class PostgresStorage(TaskStorage):
         except Exception as e:
             logger.error(f"Failed to cleanup old tasks from PostgreSQL: {e}")
             return 0
+    
+    async def request_cancel_task(self, task_id: str) -> bool:
+        """
+        Request cancellation of a task (stateless operation).
+        
+        This method updates the database and sends a NOTIFY to all listening instances.
+        
+        Args:
+            task_id: Unique identifier for the task to cancel
+            
+        Returns:
+            bool: True if the cancellation request was recorded successfully
+        """
+        await self._ensure_initialized()
+        
+        try:
+            async with self._pool.acquire() as conn:
+                # Check if cancel_requested column exists
+                has_cancel_requested = await self._column_exists(conn, 'cancel_requested')
+                has_cancelled_at = await self._column_exists(conn, 'cancelled_at')
+                
+                if not has_cancel_requested:
+                    logger.error(f"cancel_requested column does not exist, cannot cancel task {task_id}")
+                    return False
+                
+                # First check if task exists and its current status
+                current_status = await conn.fetchval(
+                    "SELECT status FROM agent_tasks WHERE task_id = $1",
+                    task_id
+                )
+                
+                if current_status is None:
+                    logger.warning(f"Task {task_id} not found")
+                    return False
+                
+                # If already cancelled, return success (idempotent)
+                if current_status == 'cancelled':
+                    logger.info(f"Task {task_id} is already cancelled")
+                    return True
+                
+                # If task is finished or errored, cannot cancel
+                if current_status in ('finished', 'error'):
+                    logger.warning(f"Task {task_id} is already {current_status}, cannot cancel")
+                    return False
+                
+                # For pending/running tasks, update cancel_requested flag
+                logger.debug(f"Task {task_id} is in '{current_status}' state, proceeding with cancellation")
+                
+                # Build UPDATE statement based on available columns
+                set_clauses = ["cancel_requested = TRUE", "updated_at = $1"]
+                params = [datetime.now()]
+                param_idx = 2
+                
+                if has_cancelled_at:
+                    set_clauses.append(f"cancelled_at = ${param_idx}")
+                    params.append(datetime.now())
+                    param_idx += 1
+                
+                params.append(task_id)
+                
+                query = f"""
+                    UPDATE agent_tasks 
+                    SET {', '.join(set_clauses)}
+                    WHERE task_id = ${param_idx}
+                    AND status IN ('pending', 'running')
+                """
+                
+                result = await conn.execute(query, *params)
+                
+                updated_count = int(result.split()[-1]) if result and result.startswith("UPDATE") else 0
+                logger.debug(f"Updated {updated_count} rows for task {task_id}")
+                
+                # Send NOTIFY to all listening instances
+                # Note: NOTIFY doesn't support parameterized queries, must use string formatting
+                await conn.execute(f"NOTIFY task_cancel, '{task_id}'")
+                
+                logger.info(f"Cancellation requested for task {task_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to request cancellation for task {task_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    async def check_cancel_requested(self, task_id: str) -> bool:
+        """
+        Check if cancellation has been requested for a task.
+        
+        This method queries the database to check the cancel_requested flag.
+        
+        Args:
+            task_id: Unique identifier for the task
+            
+        Returns:
+            bool: True if cancellation has been requested
+        """
+        await self._ensure_initialized()
+        
+        try:
+            async with self._pool.acquire() as conn:
+                cancel_requested = await conn.fetchval(
+                    "SELECT cancel_requested FROM agent_tasks WHERE task_id = $1",
+                    task_id
+                )
+                return cancel_requested if cancel_requested is not None else False
+        except Exception as e:
+            logger.error(f"Failed to check cancel status for task {task_id}: {e}")
+            return False
