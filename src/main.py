@@ -1,21 +1,6 @@
-import asyncio
-import json
-import uuid
-import logging
-import re
+#!/usr/bin/env python3
 from pathlib import Path
-
 from dotenv import load_dotenv
-from httpx import HTTPStatusError
-from lybic.dto import GetSandboxResponseDto
-
-from src.chat import AsyncChatModelClient
-from src.dto import *
-from src.planner import Planner
-from src.prompts import DOUBAO_UI_TARS_SYSTEM_PROMPT_ZH
-
-# Setup logging
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 env_path = Path(__file__).parent / '.env'
@@ -26,15 +11,28 @@ else:
     if parent_env_path.exists():
         load_dotenv(dotenv_path=parent_env_path)
 
+import asyncio
+import json
+import uuid
+import logging
+import re
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from lybic import Sandbox, LybicClient
+from lybic.dto import GetSandboxResponseDto
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionUserMessageParam as UserMessage
+from httpx import HTTPStatusError
 
+from src.dto import *
+from src.chat import AsyncChatModelClient
+from src.planner import Planner
 from src.storage import create_storage, TaskData
-
+from src.prompts import DOUBAO_UI_TARS_SYSTEM_PROMPT_ZH
 
 app = FastAPI(
     title='Lybic Single Model Agent Server',
