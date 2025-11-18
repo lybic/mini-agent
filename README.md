@@ -159,6 +159,7 @@ LYBIC_API_ENDPOINT=https://api.lybic.cn
 
 # Doubao LLM API Key
 ARK_API_KEY=your-ark-api-key
+ARK_API_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3
 
 # Task Storage Configuration
 TASK_STORAGE_BACKEND=memory  # or 'postgres'

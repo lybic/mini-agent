@@ -240,6 +240,7 @@ LYBIC_API_ENDPOINT=https://api.lybic.cn
 # ==================== LLM Configuration ====================
 # Doubao/ARK API key for UI-TARS model
 ARK_API_KEY=your-ark-api-key
+ARK_API_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3
 
 # ==================== Storage Configuration ====================
 # Backend type: 'memory' (default) or 'postgres'
@@ -1018,6 +1019,7 @@ services:
       # LYBIC_API_KEY: sk-your-default-key
       # LYBIC_ORG_ID: your-default-org
       # ARK_API_KEY: your-default-ark-key
+      # ARK_API_ENDPOINT:your-default-ark-endpoint
     depends_on:
       postgres:
         condition: service_healthy
@@ -1266,6 +1268,7 @@ if __name__ == "__main__":
 LYBIC_API_KEY="sk-your-lybic-api-key"
 LYBIC_ORG_ID="your-lybic-org-id"
 ARK_API_KEY="your-ark-api-key"
+ARK_API_ENDPOINT=https://ark.cn-beijing.volces.com/api/v3
 
 # Create sandbox
 SANDBOX_RESPONSE=$(curl -s -X POST http://localhost:5000/api/sandbox/create \

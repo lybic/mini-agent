@@ -515,7 +515,7 @@ def _setup_model_and_planner(task_id: str, sandbox_id: str, instruction: str,
 
     ai_client = AsyncOpenAI(
         api_key=llm_api_key,#os.environ.get('ARK_API_KEY'),
-        base_url='https://ark.cn-beijing.volces.com/api/v3'
+        base_url=os.environ.get('ARK_API_ENDPOINT','https://ark.cn-beijing.volces.com/api/v3')
     )
     
     model_client = AsyncChatModelClient(
